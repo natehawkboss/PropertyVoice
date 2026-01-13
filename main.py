@@ -157,6 +157,7 @@ async def maintenance_recorded(request: Request):
     recording_url = form.get("RecordingUrl")
     mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
+    logging.info(f"Maintenance keys received: {list(form.keys())}")
     logging.info(f"Maintenance callback hit. From: {from_number}, Url: {mp3_url}")
 
     try:
@@ -188,6 +189,7 @@ async def leasing_recorded(request: Request):
     recording_url = form.get("RecordingUrl")
     mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
+    logging.info(f"Leasing keys received: {list(form.keys())}")
     logging.info(f"Leasing callback hit. From: {from_number}, Url: {mp3_url}")
 
     try:
