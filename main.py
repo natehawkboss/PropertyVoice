@@ -86,7 +86,6 @@ async def route(request: Request):
     <Response>
     <Play>{audio_url}</Play>
     <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
-    <Play>{thanks_url}</Play>
     </Response>
     """
         return Response(content=twiml, media_type="application/xml")
@@ -103,7 +102,6 @@ async def route(request: Request):
     <Response>
     <Play>{audio_url}</Play>
     <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
-    <Play>{thanks_url}</Play>
     </Response>
     """
         return Response(content=twiml, media_type="application/xml")
@@ -155,19 +153,26 @@ async def tts(text: str):
 async def maintenance_recorded(request: Request):
     form = await request.form()
 
-    from_number = form.get("From")
-    recording_url = form.get("RecordingUrl")
-    mp3_url = f"{recording_url}.mp3" if recording_url else ""
+    logging.info(f"Maintenance callback hit. From: {from_number}, Url: {mp3_url}")
 
-    append_maintenance_row([
-        datetime.utcnow().isoformat(),
-        from_number or "",
-        mp3_url,
-    ])
+    try:
+        append_maintenance_row([
+            datetime.utcnow().isoformat(),
+            from_number or "",
+            mp3_url,
+        ])
+        logging.info("Sheets append successful")
+    except Exception as e:
+        logging.error(f"Sheets append failed: {e}")
+
     await slack_notify(f"🛠️ Maintenance voicemail from {from_number}\nRecording: {mp3_url}")
+    
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/maintenance_recorded", "").replace("http://", "https://")
+    thanks_text = "Thank you. We received your maintenance request. Goodbye."
+    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
 
     return Response(
-        content="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{thanks_url}</Play></Response>',
         media_type="application/xml",
     )
 
@@ -175,19 +180,26 @@ async def maintenance_recorded(request: Request):
 async def leasing_recorded(request: Request):
     form = await request.form()
 
-    from_number = form.get("From")
-    recording_url = form.get("RecordingUrl")
-    mp3_url = f"{recording_url}.mp3" if recording_url else ""
+    logging.info(f"Leasing callback hit. From: {from_number}, Url: {mp3_url}")
 
-    append_leasing_row([
-        datetime.utcnow().isoformat(),
-        from_number or "",
-        mp3_url,
-    ])
+    try:
+        append_leasing_row([
+            datetime.utcnow().isoformat(),
+            from_number or "",
+            mp3_url,
+        ])
+        logging.info("Sheets append successful")
+    except Exception as e:
+        logging.error(f"Sheets append failed: {e}")
+
     await slack_notify(f"🏠 Leasing voicemail from {from_number}\nRecording: {mp3_url}")
 
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing_recorded", "").replace("http://", "https://")
+    thanks_text = "Thank you. We received your leasing inquiry. Goodbye."
+    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
+
     return Response(
-        content="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{thanks_url}</Play></Response>',
         media_type="application/xml",
     )
 
