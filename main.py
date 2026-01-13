@@ -31,6 +31,13 @@ def twiml_play(url: str) -> str:
 </Response>
 """
 
+async def slack_notify(text: str):
+    url = os.getenv("SLACK_WEBHOOK_URL")
+    if not url:
+        return
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(url, json={"text": text})
+
 @app.api_route("/twilio/voice", methods=["GET", "POST"])
 async def voice(request: Request):
     base_url = str(request.base_url).rstrip("/")
@@ -62,13 +69,20 @@ async def route(request: Request):
         audio_url = f"{base_url}/tts?{q}"
         record_action = f"{base_url}/twilio/maintenance_recorded"
 
+        # Instead of only <Play>, do:
+        # 1) Try <Play> ElevenLabs audio URL
+        # 2) If it fails (audio fetch fails), Twilio continues and can <Say> as fallback
+
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-                <Response>
-                <Play>{audio_url}</Play>
-                <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
-                <Play>{base_url}/tts?{urllib.parse.urlencode({"text":"Thank you. We received your maintenance request. Goodbye."})}</Play>
-                </Response>
-                """
+        <Response>
+        <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
+            <Play>{audio_url}</Play>
+            <Say voice="alice">{text}</Say>
+        </Gather>
+        <Say voice="alice">We did not receive your selection. Goodbye.</Say>
+        </Response>
+        """
+
         return Response(content=twiml, media_type="application/xml")
 
     elif digit == "2":
@@ -79,13 +93,20 @@ async def route(request: Request):
         record_action = f"{base_url}/twilio/leasing_recorded"
         thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': 'Thank you. We received your leasing inquiry. Goodbye.'})}"
 
+        # Instead of only <Play>, do:
+        # 1) Try <Play> ElevenLabs audio URL
+        # 2) If it fails (audio fetch fails), Twilio continues and can <Say> as fallback
+
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-                <Response>
-                <Play>{audio_url}</Play>
-                <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
-                <Play>{thanks_url}</Play>
-                </Response>
-                """
+        <Response>
+        <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
+            <Play>{audio_url}</Play>
+            <Say voice="alice">{text}</Say>
+        </Gather>
+        <Say voice="alice">We did not receive your selection. Goodbye.</Say>
+        </Response>
+        """
+
         return Response(content=twiml, media_type="application/xml")
 
     else:
@@ -141,6 +162,7 @@ async def maintenance_recorded(request: Request):
         from_number or "",
         mp3_url,
     ])
+    await slack_notify(f"🛠️ Maintenance voicemail from {from_number}\nRecording: {mp3_url}")
 
     return Response(
         content="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
@@ -160,6 +182,7 @@ async def leasing_recorded(request: Request):
         from_number or "",
         mp3_url,
     ])
+    await slack_notify(f"🛠️ Maintenance voicemail from {from_number}\nRecording: {mp3_url}")
 
     return Response(
         content="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
