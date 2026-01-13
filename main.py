@@ -1,10 +1,12 @@
 import os
 import httpx
+import json
 import urllib.parse
 from datetime import datetime
 
-from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
+from google.oauth2.service_account import Credentials
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
@@ -13,6 +15,16 @@ app = FastAPI()
 
 ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVEN_VOICE = os.getenv("ELEVENLABS_VOICE_ID", "")
+
+def get_sheets_creds():
+    creds_json = os.getenv("GOOGLE_CREDS_JSON")
+    if not creds_json:
+        raise RuntimeError("Missing GOOGLE_CREDS_JSON")
+    info = json.loads(creds_json)
+    return Credentials.from_service_account_info(
+        info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
 
 def twiml_play(url: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -153,10 +165,7 @@ async def leasing_recorded(request: Request):
 
 
 def append_maintenance_row(values):
-    creds = Credentials.from_service_account_file(
-        os.getenv("GOOGLE_CREDS_PATH"),
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
+    creds = get_sheets_creds()
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
@@ -166,10 +175,7 @@ def append_maintenance_row(values):
     ).execute()
 
 def append_leasing_row(values):
-    creds = Credentials.from_service_account_file(
-        os.getenv("GOOGLE_CREDS_PATH"),
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
+    creds = get_sheets_creds()
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
