@@ -62,7 +62,11 @@ async def voice(request: Request):
 @app.api_route("/twilio/route", methods=["GET", "POST"])
 async def route(request: Request):
     form = await request.form()
-    digit = form.get("Digits")
+    logging.info(f"Route called. Method: {request.method}, URL: {request.url}")
+    logging.info(f"Query params: {request.query_params}")
+    form = await request.form()
+    logging.info(f"Form data: {form}")
+    digit = form.get("Digits") or request.query_params.get("Digits")
 
     if digit == "1":
         base_url = str(request.base_url).rstrip("/")
