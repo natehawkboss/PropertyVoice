@@ -6,7 +6,6 @@ from datetime import datetime
 
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
-from google.oauth2.service_account import Credentials
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 
@@ -20,9 +19,8 @@ def get_sheets_creds():
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
     if not creds_json:
         raise RuntimeError("Missing GOOGLE_CREDS_JSON")
-    info = json.loads(creds_json)
     return Credentials.from_service_account_info(
-        info,
+        json.loads(creds_json),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
 
@@ -99,12 +97,19 @@ async def route(request: Request):
 
     return Response(content=twiml_play(audio_url), media_type="application/xml")
 
+@app.get("/twilio_say")
+async def twilio_say(text: str):
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">{text}</Say>
+</Response>
+"""
+    return Response(content=twiml, media_type="application/xml")
 
 @app.get("/tts")
 async def tts(text: str):
-    # Twilio calls this endpoint via HTTP GET and expects audio bytes back.
     if not ELEVEN_KEY or not ELEVEN_VOICE:
-        return Response("Missing ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID", status_code=500)
+        return Response("Missing ElevenLabs config", status_code=500)
 
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}"
     headers = {
@@ -112,17 +117,15 @@ async def tts(text: str):
         "Content-Type": "application/json",
         "Accept": "audio/mpeg",
     }
-    payload = {
-        "text": text,
-        "model_id": "eleven_multilingual_v2",
-    }
+    payload = {"text": text, "model_id": "eleven_multilingual_v2"}
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, headers=headers, json=payload)
-        if r.status_code != 200:
-            return Response(f"ElevenLabs error {r.status_code}: {r.text}", status_code=500)
 
-        # Stream bytes back to Twilio
+        # If ElevenLabs blocks/fails, return 503 so caller flow can fall back
+        if r.status_code != 200:
+            return Response("TTS unavailable", status_code=503)
+
         return StreamingResponse(iter([r.content]), media_type="audio/mpeg")
 
 @app.api_route("/twilio/maintenance_recorded", methods=["GET", "POST"])
