@@ -52,7 +52,6 @@ async def voice(request: Request):
 <Response>
   <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
     <Play>{audio_url}</Play>
-    <Say>{text}</Say>
   </Gather>
   <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not receive your selection. Goodbye.'})}</Play>
 </Response>
@@ -63,11 +62,17 @@ async def voice(request: Request):
 @app.api_route("/twilio/route", methods=["GET", "POST"])
 async def route(request: Request):
     form = await request.form()
+    # Force HTTPS to prevent redirects
+    base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
+    
     logging.info(f"Route called. Method: {request.method}, URL: {request.url}")
     logging.info(f"Query params: {request.query_params}")
     form = await request.form()
     logging.info(f"Form data: {form}")
-    digit = form.get("Digits") or request.query_params.get("Digits")
+    
+    val = form.get("Digits") or request.query_params.get("Digits")
+    digit = str(val).strip() if val else None
+    logging.info(f"Resolved digit: '{digit}' (from '{val}')")
 
     if digit == "1":
         base_url = str(request.base_url).rstrip("/")
@@ -80,10 +85,8 @@ async def route(request: Request):
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
     <Play>{audio_url}</Play>
-    <Say voice="alice">{text}</Say>
     <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
     <Play>{thanks_url}</Play>
-    <Say voice="alice">{thanks_text}</Say>
     </Response>
     """
         return Response(content=twiml, media_type="application/xml")
@@ -99,10 +102,8 @@ async def route(request: Request):
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
     <Play>{audio_url}</Play>
-    <Say voice="alice">{text}</Say>
     <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
     <Play>{thanks_url}</Play>
-    <Say voice="alice">{thanks_text}</Say>
     </Response>
     """
         return Response(content=twiml, media_type="application/xml")

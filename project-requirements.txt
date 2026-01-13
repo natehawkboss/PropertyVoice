@@ -1,0 +1,147 @@
+🎯 Goal
+
+An AI-powered phone receptionist for a property manager that:
+
+Answers calls
+
+Routes callers to Maintenance or Leasing
+
+Collects voicemails
+
+Logs everything for human follow-up
+
+Sends notifications
+
+Works reliably with minimal AI risk
+
+✅ Functional Requirements (v1)
+1. Phone Receptionist
+
+Receives inbound calls via Twilio Voice
+
+Plays a professional greeting
+
+Offers keypad routing:
+
+Press 1 → Maintenance
+
+Press 2 → Leasing
+
+Works 24/7
+
+Handles Twilio trial messaging gracefully
+
+2. Voice Output
+
+Primary TTS: ElevenLabs
+
+Fallback TTS: Twilio <Say>
+
+Must not fail if ElevenLabs is unavailable
+
+Spoken prompts must be short and clear
+
+3. Maintenance Intake
+
+Triggered when caller presses 1
+
+Plays a spoken prompt
+
+Records voicemail (max ~120s)
+
+Caller ends with #
+
+Stores:
+
+Timestamp
+
+Caller phone number
+
+Recording URL
+
+No speech-to-text in v1 (intentional)
+
+4. Leasing Intake
+
+Triggered when caller presses 2
+
+Same voicemail-based flow as maintenance
+
+Stores:
+
+Timestamp
+
+Caller phone number
+
+Recording URL
+
+5. Data Storage
+
+Google Sheets as the system of record
+
+Separate tabs:
+
+Maintenance
+
+Leasing
+
+Columns:
+
+Timestamp | From | Recording URL
+
+
+Uses Google Service Account
+
+Auth via env var JSON (Railway-safe)
+
+6. Notifications
+
+Slack webhook notifications for:
+
+New maintenance voicemail
+
+New leasing voicemail
+
+Message includes:
+
+Type (maintenance/leasing)
+
+Caller number
+
+Recording link
+
+7. Deployment
+
+Hosted on Railway
+
+Uses:
+
+uvicorn + FastAPI
+
+Public HTTPS endpoint
+
+Twilio points directly to Railway URL
+
+No ngrok in production
+
+8. Reliability & Safety
+
+No real-time ASR in v1 (voicemail only)
+
+No hallucination risk
+
+No blocking on external APIs
+
+Graceful degradation if ElevenLabs fails
+
+🔐 Environment Variables (Final)
+Required
+GOOGLE_SHEET_ID
+GOOGLE_CREDS_JSON
+
+Optional / Voice
+ELEVENLABS_API_KEY
+ELEVENLABS_VOICE_ID
+
+Optional / Notifications
+SLACK_WEBHOOK_URL

@@ -1,0 +1,64 @@
+Phase 1 — Core Telephony (DONE)
+
+Twilio webhook
+
+FastAPI server
+
+Keypad routing
+
+Recording intake
+
+Phase 2 — Voice Experience (DONE)
+
+ElevenLabs TTS
+
+Twilio fallback
+
+Production-safe <Play> + <Say>
+
+Phase 3 — Persistence (DONE)
+
+Google Sheets logging
+
+Service account auth
+
+Railway-safe credentials
+
+Phase 4 — Notifications (DONE)
+
+Slack alerts on new intake
+
+🚀 Optional Next Phases (Future)
+Phase 5 — Quality of Life
+
+SMS confirmation to caller
+
+Email summary to property manager
+
+Better prompt wording / branding
+
+Phase 6 — Intelligence (Optional)
+
+ASR transcription of voicemails
+
+Auto-tagging maintenance issues
+
+Emergency detection & escalation
+
+Phase 7 — Multi-Property / SaaS
+
+Per-property numbers
+
+Per-client Sheets/Slack
+
+Admin dashboard
+
+🧠 Key Design Decisions (Why this works)
+
+Voicemail-first → robust, low latency, zero hallucinations
+
+Sheets as backend → transparent, editable, no DB overhead
+
+Fallback voice → production-safe
+
+Single service → simple deployment & debugging
