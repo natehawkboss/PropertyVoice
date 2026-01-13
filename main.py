@@ -51,6 +51,7 @@ async def voice(request: Request):
 <Response>
   <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
     <Play>{audio_url}</Play>
+    <Say>{text}</Say>
   </Gather>
   <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not receive your selection. Goodbye.'})}</Play>
 </Response>
@@ -64,51 +65,41 @@ async def route(request: Request):
     digit = form.get("Digits")
 
     if digit == "1":
-        # Prompt via ElevenLabs, then record the caller
-        text = "You selected maintenance. After the beep, please describe the issue, your unit number, and the best callback number. Press pound when finished."
         base_url = str(request.base_url).rstrip("/")
-        q = urllib.parse.urlencode({"text": text})
-        audio_url = f"{base_url}/tts?{q}"
+        text = "You selected maintenance. After the beep, please describe the issue, your unit number, and the best callback number. Press pound when finished."
+        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
         record_action = f"{base_url}/twilio/maintenance_recorded"
-
-        # Instead of only <Play>, do:
-        # 1) Try <Play> ElevenLabs audio URL
-        # 2) If it fails (audio fetch fails), Twilio continues and can <Say> as fallback
+        thanks_text = "Thank you. We received your maintenance request. Goodbye."
+        thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
 
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-        <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
-            <Play>{audio_url}</Play>
-            <Say voice="alice">{text}</Say>
-        </Gather>
-        <Say voice="alice">We did not receive your selection. Goodbye.</Say>
-        </Response>
-        """
-
+    <Response>
+    <Play>{audio_url}</Play>
+    <Say voice="alice">{text}</Say>
+    <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
+    <Play>{thanks_url}</Play>
+    <Say voice="alice">{thanks_text}</Say>
+    </Response>
+    """
         return Response(content=twiml, media_type="application/xml")
 
     elif digit == "2":
-        text = "You selected leasing. After the beep, please leave your name, the property you're interested in, and the best callback number. Press pound when finished."
         base_url = str(request.base_url).rstrip("/")
-
+        text = "You selected leasing. After the beep, please leave your name, the property you're interested in, and the best callback number. Press pound when finished."
         audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
         record_action = f"{base_url}/twilio/leasing_recorded"
-        thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': 'Thank you. We received your leasing inquiry. Goodbye.'})}"
-
-        # Instead of only <Play>, do:
-        # 1) Try <Play> ElevenLabs audio URL
-        # 2) If it fails (audio fetch fails), Twilio continues and can <Say> as fallback
+        thanks_text = "Thank you. We received your leasing inquiry. Goodbye."
+        thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
 
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-        <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
-            <Play>{audio_url}</Play>
-            <Say voice="alice">{text}</Say>
-        </Gather>
-        <Say voice="alice">We did not receive your selection. Goodbye.</Say>
-        </Response>
-        """
-
+    <Response>
+    <Play>{audio_url}</Play>
+    <Say voice="alice">{text}</Say>
+    <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
+    <Play>{thanks_url}</Play>
+    <Say voice="alice">{thanks_text}</Say>
+    </Response>
+    """
         return Response(content=twiml, media_type="application/xml")
 
     else:
@@ -187,7 +178,7 @@ async def leasing_recorded(request: Request):
         from_number or "",
         mp3_url,
     ])
-    await slack_notify(f"🛠️ Maintenance voicemail from {from_number}\nRecording: {mp3_url}")
+    await slack_notify(f"🏠 Leasing voicemail from {from_number}\nRecording: {mp3_url}")
 
     return Response(
         content="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
