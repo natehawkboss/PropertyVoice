@@ -1,6 +1,7 @@
-import os
+import logging
 import httpx
 import json
+import os
 import urllib.parse
 from datetime import datetime
 
@@ -11,9 +12,10 @@ from fastapi.responses import Response, StreamingResponse
 
 
 app = FastAPI()
+logging.basicConfig(level=logging.INFO)
 
-ELEVEN_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVEN_VOICE = os.getenv("ELEVENLABS_VOICE_ID", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
 def get_sheets_creds():
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
@@ -129,12 +131,15 @@ async def twilio_say(text: str):
 
 @app.get("/tts")
 async def tts(text: str):
-    if not ELEVEN_KEY or not ELEVEN_VOICE:
+    logging.info("TTS requested: %s", text)
+
+    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
+        logging.error("Missing ElevenLabs config")
         return Response("Missing ElevenLabs config", status_code=500)
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
     headers = {
-        "xi-api-key": ELEVEN_KEY,
+        "xi-api-key": ELEVENLABS_API_KEY,
         "Content-Type": "application/json",
         "Accept": "audio/mpeg",
     }
@@ -143,8 +148,8 @@ async def tts(text: str):
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, headers=headers, json=payload)
 
-        # If ElevenLabs blocks/fails, return 503 so caller flow can fall back
         if r.status_code != 200:
+            logging.error("ElevenLabs error %s: %s", r.status_code, r.text)
             return Response("TTS unavailable", status_code=503)
 
         return StreamingResponse(iter([r.content]), media_type="audio/mpeg")
