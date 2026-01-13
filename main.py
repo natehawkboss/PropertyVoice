@@ -153,6 +153,10 @@ async def tts(text: str):
 async def maintenance_recorded(request: Request):
     form = await request.form()
 
+    from_number = form.get("From")
+    recording_url = form.get("RecordingUrl")
+    mp3_url = f"{recording_url}.mp3" if recording_url else ""
+
     logging.info(f"Maintenance callback hit. From: {from_number}, Url: {mp3_url}")
 
     try:
@@ -179,6 +183,10 @@ async def maintenance_recorded(request: Request):
 @app.api_route("/twilio/leasing_recorded", methods=["GET", "POST"])
 async def leasing_recorded(request: Request):
     form = await request.form()
+
+    from_number = form.get("From")
+    recording_url = form.get("RecordingUrl")
+    mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
     logging.info(f"Leasing callback hit. From: {from_number}, Url: {mp3_url}")
 
