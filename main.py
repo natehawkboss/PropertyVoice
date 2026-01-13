@@ -153,8 +153,8 @@ async def tts(text: str):
 async def maintenance_recorded(request: Request):
     form = await request.form()
 
-    from_number = form.get("From")
-    recording_url = form.get("RecordingUrl")
+    from_number = form.get("From") or request.query_params.get("From")
+    recording_url = form.get("RecordingUrl") or request.query_params.get("RecordingUrl")
     mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
     logging.info(f"Maintenance keys received: {list(form.keys())}")
@@ -185,8 +185,8 @@ async def maintenance_recorded(request: Request):
 async def leasing_recorded(request: Request):
     form = await request.form()
 
-    from_number = form.get("From")
-    recording_url = form.get("RecordingUrl")
+    from_number = form.get("From") or request.query_params.get("From")
+    recording_url = form.get("RecordingUrl") or request.query_params.get("RecordingUrl")
     mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
     logging.info(f"Leasing keys received: {list(form.keys())}")
