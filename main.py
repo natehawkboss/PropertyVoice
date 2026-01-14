@@ -164,14 +164,18 @@ async def route(request: Request):
         return Response(content=twiml, media_type="application/xml")
 
     elif digit == "2":
-        text = "You selected leasing. After the beep, please leave your name, the property you're interested in, and the best callback number. Press pound when finished."
+        base_url = str(request.base_url).rstrip("/")
+        # Redirect to the start of the conversational flow
+        text = "You selected leasing. Please say your full name after the beep."
         audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-        record_action = f"{base_url}/twilio/leasing_recorded"
+        action_url = f"{base_url}/twilio/leasing/property"
         
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-    <Play>{audio_url}</Play>
-    <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
+    <Gather input="speech" action="{action_url}" method="POST" timeout="auto">
+        <Play>{audio_url}</Play>
+    </Gather>
+    <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not hear anything. Goodbye.'})}</Play>
     </Response>
     """
         return Response(content=twiml, media_type="application/xml")
@@ -265,41 +269,92 @@ async def maintenance_recorded(request: Request):
         media_type="application/xml",
     )
 
-@app.api_route("/twilio/leasing_recorded", methods=["GET", "POST"])
-async def leasing_recorded(request: Request):
+@app.api_route("/twilio/leasing/property", methods=["GET", "POST"])
+async def leasing_property(request: Request):
     form = await request.form()
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/property", "").replace("http://", "https://")
+    
+    # Get Name from SpeechResult
+    name = form.get("SpeechResult") or "Unknown"
+    logging.info(f"Leasing Step 1 (Name): {name}")
 
-    from_number = form.get("From") or request.query_params.get("From")
-    recording_url = form.get("RecordingUrl") or request.query_params.get("RecordingUrl")
-    mp3_url = f"{recording_url}.mp3" if recording_url else ""
+    # Next Question: Property
+    text = f"Thanks, {name}. Which property are you interested in?"
+    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+    
+    # Pass Name to next step via URL
+    next_action = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
+    
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="speech" action="{next_action}" method="POST" timeout="auto">
+    <Play>{audio_url}</Play>
+  </Gather>
+  <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not hear anything. Goodbye.'})}</Play>
+</Response>
+"""
+    return Response(content=twiml, media_type="application/xml")
 
-    logging.info(f"Leasing callback hit. From: {from_number}")
+@app.api_route("/twilio/leasing/date", methods=["GET", "POST"])
+async def leasing_date(request: Request):
+    form = await request.form()
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/date", "").replace("http://", "https://")
+    
+    name = request.query_params.get("name") or "Unknown"
+    property_name = form.get("SpeechResult") or "Unknown"
+    logging.info(f"Leasing Step 2 (Property): {property_name}")
 
-    # 1. Transcribe
-    transcript = await process_audio(mp3_url)
+    # Next Question: Date
+    text = "Got it. And when are you looking to move in?"
+    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+    
+    # Pass Name & Property to next step
+    next_action = f"{base_url}/twilio/leasing/finish?name={urllib.parse.quote(name)}&property={urllib.parse.quote(property_name)}"
+    
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="speech" action="{next_action}" method="POST" timeout="auto">
+    <Play>{audio_url}</Play>
+  </Gather>
+  <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not hear anything. Goodbye.'})}</Play>
+</Response>
+"""
+    return Response(content=twiml, media_type="application/xml")
+
+@app.api_route("/twilio/leasing/finish", methods=["GET", "POST"])
+async def leasing_finish(request: Request):
+    form = await request.form()
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/finish", "").replace("http://", "https://")
+    
+    name = request.query_params.get("name") or "Unknown"
+    property_name = request.query_params.get("property") or "Unknown"
+    move_in_date = form.get("SpeechResult") or "Unknown"
+    from_number = form.get("From") or request.query_params.get("From") or "Unknown"
+    
+    logging.info(f"Leasing Step 3 (Date): {move_in_date}")
+    logging.info(f"Leasing Complete: Name={name}, Property={property_name}, Date={move_in_date}")
 
     try:
         append_leasing_row([
             datetime.utcnow().isoformat(),
-            from_number or "",
-            mp3_url,
-            transcript or ""
+            from_number,
+            name,
+            property_name,
+            move_in_date
         ])
         logging.info("Sheets append successful")
     except Exception as e:
         logging.error(f"Sheets append failed: {e}")
 
-    await slack_notify(f"🏠 Leasing voicemail from {from_number}\nTranscript: {transcript}\nRecording: {mp3_url}")
+    await slack_notify(f"🏠 New Leasing Lead:\nName: {name}\nProperty: {property_name}\nMove-in: {move_in_date}\nPhone: {from_number}")
 
-    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing_recorded", "").replace("http://", "https://")
-    thanks_text = "Thank you. We received your leasing inquiry. Goodbye."
-    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
-
+    text = f"Perfect. We have {name} interested in {property_name} for {move_in_date}. A leasing agent will reach out shortly. Goodbye."
+    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+    
     return Response(
-        content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{thanks_url}</Play></Response>',
+        content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{audio_url}</Play></Response>',
         media_type="application/xml",
     )
-
 
 def append_maintenance_row(values):
     creds = get_sheets_creds()
