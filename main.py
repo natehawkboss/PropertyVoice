@@ -405,26 +405,35 @@ async def process_leasing_background(
     """Waits for audio to be ready, transcribes, and logs to Sheets."""
     logging.info(f"Background processing started for {call_sid}")
     
-    # Wait for audio to be flushed/available (Twilio recordings aren't instant)
-    await asyncio.sleep(10)
+    # Wait for audio to be flushed/available (retry loop)
+    # Twilio recording processing can take time. We poll for 'completed' status.
+    audio_url = "Unknown"
     
     # Clean Inputs
     name = name.strip().rstrip(".")
     property_name = property_name.strip().rstrip(".")
     move_in_date = move_in_date.strip().rstrip(".")
-
-    # Fetch Recording URL
-    audio_url = "Unknown"
+    
     if twilio_client and call_sid != "Unknown":
-        try:
-            recordings = twilio_client.recordings.list(call_sid=call_sid, limit=1)
-            if recordings:
-                rec = recordings[0]
-                audio_url = f"https://api.twilio.com{rec.uri.replace('.json', '.mp3')}"
-                logging.info(f"Found recording URL: {audio_url}")
-        except Exception as e:
-            logging.error(f"Failed to fetch recording URL: {e}")
-            audio_url = "Error fetching URL"
+        for attempt in range(12): # Poll for up to 60 seconds (12 * 5s)
+            try:
+                await asyncio.sleep(5)
+                recordings = twilio_client.recordings.list(call_sid=call_sid, limit=1)
+                if recordings:
+                    rec = recordings[0]
+                    if rec.status == 'completed':
+                        audio_url = f"https://api.twilio.com{rec.uri.replace('.json', '.mp3')}"
+                        logging.info(f"Found completed recording URL: {audio_url}")
+                        break
+                    else:
+                        logging.info(f"Recording status: {rec.status}. Retrying...")
+                else:
+                    logging.info("No recordings found yet. Retrying...")
+            except Exception as e:
+                logging.error(f"Error checking recording status: {e}")
+                
+        if audio_url == "Unknown":
+            logging.error("Timed out waiting for recording to complete.")
 
     # Transcribe
     full_transcript = ""
