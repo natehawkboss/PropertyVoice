@@ -164,18 +164,19 @@ async def route(request: Request):
         return Response(content=twiml, media_type="application/xml")
 
     elif digit == "2":
-        base_url = str(request.base_url).rstrip("/")
         # Redirect to the start of the conversational flow
-        text = "You selected leasing. Please say your full name after the beep."
+        text = "You selected leasing. Please say your full name."
         audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
         action_url = f"{base_url}/twilio/leasing/property"
         
+        # Note: Gather does not support playBeep. We just prompt.
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-    <Gather input="speech" action="{action_url}" method="POST" timeout="auto">
+    <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
         <Play>{audio_url}</Play>
     </Gather>
-    <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not hear anything. Goodbye.'})}</Play>
+    <Say>I did not hear anything.</Say>
+    <Redirect method="POST">{base_url}/twilio/route?Digits=2</Redirect>
     </Response>
     """
         return Response(content=twiml, media_type="application/xml")
@@ -274,8 +275,25 @@ async def leasing_property(request: Request):
     form = await request.form()
     base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/property", "").replace("http://", "https://")
     
+    logging.info(f"Leasing Step 1 Form Keys: {list(form.keys())}")
+    
     # Get Name from SpeechResult
-    name = form.get("SpeechResult") or "Unknown"
+    name = form.get("SpeechResult")
+    if not name:
+        logging.info("Leasing Step 1: No speech result. Reprompting.")
+        text = "I didn't catch that. Please say your full name."
+        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        action_url = f"{base_url}/twilio/leasing/property"
+        
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+        <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+            <Play>{audio_url}</Play>
+        </Gather>
+        </Response>
+        """
+        return Response(content=twiml, media_type="application/xml")
+        
     logging.info(f"Leasing Step 1 (Name): {name}")
 
     # Next Question: Property
@@ -287,10 +305,11 @@ async def leasing_property(request: Request):
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="{next_action}" method="POST" timeout="auto">
+  <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
     <Play>{audio_url}</Play>
   </Gather>
-  <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not hear anything. Goodbye.'})}</Play>
+  <Say>I did not hear anything.</Say>
+  <Redirect method="POST">{action_url}</Redirect>
 </Response>
 """
     return Response(content=twiml, media_type="application/xml")
@@ -300,8 +319,27 @@ async def leasing_date(request: Request):
     form = await request.form()
     base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/date", "").replace("http://", "https://")
     
+    logging.info(f"Leasing Step 2 Form Keys: {list(form.keys())}")
+
     name = request.query_params.get("name") or "Unknown"
-    property_name = form.get("SpeechResult") or "Unknown"
+    property_name = form.get("SpeechResult")
+    
+    if not property_name:
+        logging.info("Leasing Step 2: No speech result. Reprompting.")
+        text = "Sorry, which property was that?"
+        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        # Keep name in URL
+        next_action = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
+        
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+        <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+            <Play>{audio_url}</Play>
+        </Gather>
+        </Response>
+        """
+        return Response(content=twiml, media_type="application/xml")
+
     logging.info(f"Leasing Step 2 (Property): {property_name}")
 
     # Next Question: Date
@@ -311,12 +349,16 @@ async def leasing_date(request: Request):
     # Pass Name & Property to next step
     next_action = f"{base_url}/twilio/leasing/finish?name={urllib.parse.quote(name)}&property={urllib.parse.quote(property_name)}"
     
+    # Reload this step's URL if timeout
+    current_url = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
+
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="{next_action}" method="POST" timeout="auto">
+  <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
     <Play>{audio_url}</Play>
   </Gather>
-  <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not hear anything. Goodbye.'})}</Play>
+  <Say>I did not hear anything.</Say>
+  <Redirect method="POST">{current_url}</Redirect>
 </Response>
 """
     return Response(content=twiml, media_type="application/xml")
