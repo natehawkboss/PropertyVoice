@@ -21,6 +21,10 @@ OPENAI_SECRET_KEY = os.getenv("OPENAI_SECRET_KEY", "")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 
+# Initialize Twilio Client
+from twilio.rest import Client
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else None
+
 openai_client = AsyncOpenAI(api_key=OPENAI_SECRET_KEY) if OPENAI_SECRET_KEY else None
 
 def get_sheets_creds():
@@ -123,6 +127,17 @@ async def classify_maintenance_issue(text: str):
 
 @app.api_route("/twilio/voice", methods=["GET", "POST"])
 async def voice(request: Request):
+    form = await request.form()
+    
+    # Start recording the call immediately for quality assurance/parsing
+    call_sid = form.get("CallSid")
+    if twilio_client and call_sid:
+        try:
+            twilio_client.calls(call_sid).recordings.create()
+            logging.info(f"Started recording for CallSid: {call_sid}")
+        except Exception as e:
+            logging.error(f"Failed to start recording: {e}")
+
     base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
     text = "Hello. This is the property manager assistant. Press 1 for maintenance. Press 2 for leasing."
     audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
@@ -386,7 +401,12 @@ async def leasing_finish(request: Request):
     property_name = request.query_params.get("property") or "Unknown"
     move_in_date = form.get("SpeechResult") or "Unknown"
     from_number = form.get("From") or request.query_params.get("From") or "Unknown"
+    call_sid = form.get("CallSid") or "Unknown"
     
+    # Construct "Transcript" and "Audio URL"
+    full_transcript = f"Name: {name} | Property: {property_name} | Move-in: {move_in_date}"
+    audio_url = f"https://console.twilio.com/us1/monitor/logs/calls/{call_sid}" if call_sid != "Unknown" else "Unknown"
+
     logging.info(f"Leasing Step 3 (Date): {move_in_date}")
     logging.info(f"Leasing Complete: Name={name}, Property={property_name}, Date={move_in_date}")
 
@@ -396,7 +416,9 @@ async def leasing_finish(request: Request):
             from_number,
             name,
             property_name,
-            move_in_date
+            move_in_date,
+            full_transcript,
+            audio_url
         ])
         logging.info("Sheets append successful")
     except Exception as e:
