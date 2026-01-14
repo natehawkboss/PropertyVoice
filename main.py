@@ -9,14 +9,16 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
-
-#test
+from openai import AsyncOpenAI
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+OPENAI_SECRET_KEY = os.getenv("OPENAI_SECRET_KEY", "")
+
+openai_client = AsyncOpenAI(api_key=OPENAI_SECRET_KEY) if OPENAI_SECRET_KEY else None
 
 def get_sheets_creds():
     creds_json = os.getenv("GOOGLE_CREDS_JSON")
@@ -41,10 +43,66 @@ async def slack_notify(text: str):
     async with httpx.AsyncClient(timeout=10) as client:
         await client.post(url, json={"text": text})
 
+async def process_audio(recording_url: str):
+    """Downloads audio and transcribes it using Whisper."""
+    if not openai_client or not recording_url:
+        return None
+
+    try:
+        logging.info(f"Downloading audio from {recording_url}")
+        async with httpx.AsyncClient() as client:
+            response = await client.get(recording_url)
+            if response.status_code != 200:
+                logging.error(f"Failed to download audio: {response.status_code}")
+                return None
+            
+            # OpenAI requires a filename
+            file_obj = ("audio.mp3", response.content, "audio/mpeg")
+            
+            transcript = await openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=file_obj
+            )
+            logging.info(f"Transcription: {transcript.text}")
+            return transcript.text
+    except Exception as e:
+        logging.error(f"Transcription failed: {e}")
+        return None
+
+async def classify_maintenance_issue(text: str):
+    """Classifies the issue and returns specific advice."""
+    if not openai_client or not text:
+        return "Unknown", "Thank you. We have logged your maintenance request."
+
+    system_prompt = """
+    You are a property management assistant. Analyze the maintenance request.
+    Output JSON: {"category": "Emergency" | "Urgent" | "Routine", "advice": "One sentence advice for the tenant."}
+    
+    Rules:
+    - If water leak/flood: Advise to turn off water valve immediately.
+    - If fire/gas: Advise to call 911/emergency services and leave.
+    - If no heat (winter): Advise to check thermostat batteries.
+    - Otherwise: "We will prioritize this shortly."
+    """
+    
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ],
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response.choices[0].message.content)
+        return data.get("category", "Routine"), data.get("advice", "We have received your request.")
+    except Exception as e:
+        logging.error(f"Classification failed: {e}")
+        return "Error", "Thank you. We have logged your request."
+
 @app.api_route("/twilio/voice", methods=["GET", "POST"])
 async def voice(request: Request):
-    base_url = str(request.base_url).rstrip("/")
-
+    base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
     text = "Hello. This is the property manager assistant. Press 1 for maintenance. Press 2 for leasing."
     audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
 
@@ -62,26 +120,20 @@ async def voice(request: Request):
 @app.api_route("/twilio/route", methods=["GET", "POST"])
 async def route(request: Request):
     form = await request.form()
-    # Force HTTPS to prevent redirects
     base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
     
     logging.info(f"Route called. Method: {request.method}, URL: {request.url}")
-    logging.info(f"Query params: {request.query_params}")
     form = await request.form()
-    logging.info(f"Form data: {form}")
     
     val = form.get("Digits") or request.query_params.get("Digits")
     digit = str(val).strip() if val else None
     logging.info(f"Resolved digit: '{digit}' (from '{val}')")
 
     if digit == "1":
-        base_url = str(request.base_url).rstrip("/")
         text = "You selected maintenance. After the beep, please describe the issue, your unit number, and the best callback number. Press pound when finished."
         audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
         record_action = f"{base_url}/twilio/maintenance_recorded"
-        thanks_text = "Thank you. We received your maintenance request. Goodbye."
-        thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
-
+        
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
     <Play>{audio_url}</Play>
@@ -91,13 +143,10 @@ async def route(request: Request):
         return Response(content=twiml, media_type="application/xml")
 
     elif digit == "2":
-        base_url = str(request.base_url).rstrip("/")
         text = "You selected leasing. After the beep, please leave your name, the property you're interested in, and the best callback number. Press pound when finished."
         audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
         record_action = f"{base_url}/twilio/leasing_recorded"
-        thanks_text = "Thank you. We received your leasing inquiry. Goodbye."
-        thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
-
+        
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
     <Play>{audio_url}</Play>
@@ -109,7 +158,6 @@ async def route(request: Request):
     else:
         text = "Invalid selection. Goodbye."
 
-    base_url = str(request.base_url).rstrip("/")
     q = urllib.parse.urlencode({"text": text})
     audio_url = f"{base_url}/tts?{q}"
 
@@ -157,24 +205,32 @@ async def maintenance_recorded(request: Request):
     recording_url = form.get("RecordingUrl") or request.query_params.get("RecordingUrl")
     mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
-    logging.info(f"Maintenance keys received: {list(form.keys())}")
-    logging.info(f"Maintenance callback hit. From: {from_number}, Url: {mp3_url}")
+    logging.info(f"Maintenance callback hit. From: {from_number}")
+    
+    # 1. Transcribe
+    transcript = await process_audio(mp3_url)
+    
+    # 2. Classify
+    category, advice = await classify_maintenance_issue(transcript)
+    logging.info(f"Issue: {category}, Advice: {advice}")
 
     try:
         append_maintenance_row([
             datetime.utcnow().isoformat(),
             from_number or "",
             mp3_url,
+            transcript or "",
+            category,
+            advice
         ])
         logging.info("Sheets append successful")
     except Exception as e:
         logging.error(f"Sheets append failed: {e}")
 
-    await slack_notify(f"🛠️ Maintenance voicemail from {from_number}\nRecording: {mp3_url}")
+    await slack_notify(f"🛠️ Maintenance ({category}) from {from_number}\nTranscript: {transcript}\nAdvice Given: {advice}\nRecording: {mp3_url}")
     
     base_url = str(request.base_url).rstrip("/").replace("/twilio/maintenance_recorded", "").replace("http://", "https://")
-    thanks_text = "Thank you. We received your maintenance request. Goodbye."
-    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': thanks_text})}"
+    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': advice})}"
 
     return Response(
         content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{thanks_url}</Play></Response>',
@@ -189,20 +245,23 @@ async def leasing_recorded(request: Request):
     recording_url = form.get("RecordingUrl") or request.query_params.get("RecordingUrl")
     mp3_url = f"{recording_url}.mp3" if recording_url else ""
 
-    logging.info(f"Leasing keys received: {list(form.keys())}")
-    logging.info(f"Leasing callback hit. From: {from_number}, Url: {mp3_url}")
+    logging.info(f"Leasing callback hit. From: {from_number}")
+
+    # 1. Transcribe
+    transcript = await process_audio(mp3_url)
 
     try:
         append_leasing_row([
             datetime.utcnow().isoformat(),
             from_number or "",
             mp3_url,
+            transcript or ""
         ])
         logging.info("Sheets append successful")
     except Exception as e:
         logging.error(f"Sheets append failed: {e}")
 
-    await slack_notify(f"🏠 Leasing voicemail from {from_number}\nRecording: {mp3_url}")
+    await slack_notify(f"🏠 Leasing voicemail from {from_number}\nTranscript: {transcript}\nRecording: {mp3_url}")
 
     base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing_recorded", "").replace("http://", "https://")
     thanks_text = "Thank you. We received your leasing inquiry. Goodbye."
@@ -219,7 +278,7 @@ def append_maintenance_row(values):
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
-        range="Maintenance!A:C",
+        range="Maintenance!A:F",
         valueInputOption="USER_ENTERED",
         body={"values": [values]},
     ).execute()
@@ -229,8 +288,7 @@ def append_leasing_row(values):
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
-        range="Leasing!A:C",
+        range="Leasing!A:D",
         valueInputOption="USER_ENTERED",
         body={"values": [values]},
     ).execute()
-    
