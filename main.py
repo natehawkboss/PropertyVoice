@@ -277,8 +277,9 @@ async def leasing_property(request: Request):
     
     logging.info(f"Leasing Step 1 Form Keys: {list(form.keys())}")
     
-    # Get Name from SpeechResult
-    name = form.get("SpeechResult")
+    # Get Name from SpeechResult OR Query (if reprompting)
+    name = form.get("SpeechResult") or request.query_params.get("name")
+    
     if not name:
         logging.info("Leasing Step 1: No speech result. Reprompting.")
         text = "I didn't catch that. Please say your full name."
@@ -290,6 +291,8 @@ async def leasing_property(request: Request):
         <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
             <Play>{audio_url}</Play>
         </Gather>
+        <Say>I did not hear anything.</Say>
+        <Redirect method="POST">{action_url}</Redirect>
         </Response>
         """
         return Response(content=twiml, media_type="application/xml")
@@ -301,15 +304,18 @@ async def leasing_property(request: Request):
     audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
     
     # Pass Name to next step via URL
-    next_action = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
+    next_action_url = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
+    
+    # Retry this step if silence (pass name so we don't ask for it again)
+    retry_url = f"{base_url}/twilio/leasing/property?name={urllib.parse.quote(name)}"
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+  <Gather input="speech" action="{next_action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
     <Play>{audio_url}</Play>
   </Gather>
   <Say>I did not hear anything.</Say>
-  <Redirect method="POST">{action_url}</Redirect>
+  <Redirect method="POST">{retry_url}</Redirect>
 </Response>
 """
     return Response(content=twiml, media_type="application/xml")
