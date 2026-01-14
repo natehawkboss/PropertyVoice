@@ -8,7 +8,8 @@ from datetime import datetime
 
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
+import asyncio
 from fastapi.responses import Response, StreamingResponse
 from openai import AsyncOpenAI
 from twilio.rest import Client
@@ -392,51 +393,49 @@ async def leasing_date(request: Request):
 """
     return Response(content=twiml, media_type="application/xml")
 
-@app.api_route("/twilio/leasing/finish", methods=["GET", "POST"])
-async def leasing_finish(request: Request):
-    form = await request.form()
-    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/finish", "").replace("http://", "https://")
+
+
+async def process_leasing_background(
+    call_sid: str,
+    from_number: str,
+    name: str,
+    property_name: str,
+    move_in_date: str
+):
+    """Waits for audio to be ready, transcribes, and logs to Sheets."""
+    logging.info(f"Background processing started for {call_sid}")
     
-    name = request.query_params.get("name") or "Unknown"
-    property_name = request.query_params.get("property") or "Unknown"
-    move_in_date = form.get("SpeechResult") or "Unknown"
-    from_number = form.get("From") or request.query_params.get("From") or "Unknown"
-    call_sid = form.get("CallSid") or "Unknown"
+    # Wait for audio to be flushed/available (Twilio recordings aren't instant)
+    await asyncio.sleep(10)
     
-    # Fetch the actual Recording URL (MP3) matching the behavior of <Record>
+    # Clean Inputs
+    name = name.strip().rstrip(".")
+    property_name = property_name.strip().rstrip(".")
+    move_in_date = move_in_date.strip().rstrip(".")
+
+    # Fetch Recording URL
     audio_url = "Unknown"
     if twilio_client and call_sid != "Unknown":
         try:
-            # List recordings for this call (there should be one "in-progress" or "completed")
             recordings = twilio_client.recordings.list(call_sid=call_sid, limit=1)
             if recordings:
-                # Construct raw MP3 URL: https://api.twilio.com/2010-04-01/Accounts/{AC}/Recordings/{RE}.mp3
-                # The .uri property is relative, e.g. /2010-04-01/Accounts/.../Recordings/...
                 rec = recordings[0]
                 audio_url = f"https://api.twilio.com{rec.uri.replace('.json', '.mp3')}"
                 logging.info(f"Found recording URL: {audio_url}")
         except Exception as e:
             logging.error(f"Failed to fetch recording URL: {e}")
             audio_url = "Error fetching URL"
-    
-    # Clean Inputs (strip trailing periods added by Twilio ASR)
-    name = name.strip().rstrip(".")
-    property_name = property_name.strip().rstrip(".")
-    move_in_date = move_in_date.strip().rstrip(".")
-    
-    # Generate Full Transcript using Whisper if audio is available
+
+    # Transcribe
     full_transcript = ""
     if audio_url.startswith("http"):
-        # This might take a few seconds, but ensures high quality transcript
+        # Retry logic for download if needed, but process_audio logs errors
         full_transcript = await process_audio(audio_url) or ""
     
-    # Fallback if Whisper fails or no audio
     if not full_transcript:
         full_transcript = f"Name: {name} | Property: {property_name} | Move-in: {move_in_date}"
 
-    logging.info(f"Leasing Step 3 (Date): {move_in_date}")
-    logging.info(f"Leasing Complete: Name={name}, Property={property_name}, Date={move_in_date}")
-
+    # Log to Sheets
     try:
         append_leasing_row([
             datetime.utcnow().isoformat(),
@@ -447,11 +446,32 @@ async def leasing_finish(request: Request):
             full_transcript,
             audio_url
         ])
-        logging.info("Sheets append successful")
+        logging.info("Sheets append successful (Background)")
     except Exception as e:
         logging.error(f"Sheets append failed: {e}")
 
-    await slack_notify(f"🏠 New Leasing Lead:\nName: {name}\nProperty: {property_name}\nMove-in: {move_in_date}\nPhone: {from_number}")
+@app.api_route("/twilio/leasing/finish", methods=["GET", "POST"])
+async def leasing_finish(request: Request, background_tasks: BackgroundTasks):
+    form = await request.form()
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/leasing/finish", "").replace("http://", "https://")
+    
+    name = request.query_params.get("name") or "Unknown"
+    property_name = request.query_params.get("property") or "Unknown"
+    move_in_date = form.get("SpeechResult") or "Unknown"
+    from_number = form.get("From") or request.query_params.get("From") or "Unknown"
+    call_sid = form.get("CallSid") or "Unknown"
+    
+    logging.info(f"Leasing Complete: Name={name}, Property={property_name}, Date={move_in_date}")
+
+    # Offload processing to background task
+    background_tasks.add_task(
+        process_leasing_background,
+        call_sid,
+        from_number,
+        name,
+        property_name,
+        move_in_date
+    )
 
     text = f"Perfect. We have {name} interested in {property_name} for {move_in_date}. A leasing agent will reach out shortly. Goodbye."
     audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
