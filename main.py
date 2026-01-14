@@ -3,6 +3,7 @@ import httpx
 import json
 import os
 import urllib.parse
+import time
 from datetime import datetime
 
 from googleapiclient.discovery import build
@@ -59,10 +60,14 @@ async def process_audio(recording_url: str):
             # OpenAI requires a filename
             file_obj = ("audio.mp3", response.content, "audio/mpeg")
             
+            start = time.perf_counter()
             transcript = await openai_client.audio.transcriptions.create(
                 model="whisper-1",
                 file=file_obj
             )
+            duration = time.perf_counter() - start
+            logging.info(f"[PERF] OpenAI Whisper transcription took {duration:.2f}s")
+            
             logging.info(f"Transcription: {transcript.text}")
             return transcript.text
     except Exception as e:
@@ -86,6 +91,7 @@ async def classify_maintenance_issue(text: str):
     """
     
     try:
+        start = time.perf_counter()
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -94,6 +100,9 @@ async def classify_maintenance_issue(text: str):
             ],
             response_format={"type": "json_object"}
         )
+        duration = time.perf_counter() - start
+        logging.info(f"[PERF] OpenAI GPT-4o-mini classification took {duration:.2f}s")
+
         data = json.loads(response.choices[0].message.content)
         return data.get("category", "Routine"), data.get("advice", "We have received your request.")
     except Exception as e:
@@ -189,7 +198,10 @@ async def tts(text: str):
     payload = {"text": text, "model_id": "eleven_multilingual_v2"}
 
     async with httpx.AsyncClient(timeout=30) as client:
+        start = time.perf_counter()
         r = await client.post(url, headers=headers, json=payload)
+        duration = time.perf_counter() - start
+        logging.info(f"[PERF] ElevenLabs TTS generation took {duration:.2f}s")
 
         if r.status_code != 200:
             logging.error("ElevenLabs error %s: %s", r.status_code, r.text)
