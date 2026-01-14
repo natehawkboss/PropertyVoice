@@ -88,7 +88,7 @@ async def classify_maintenance_issue(text: str):
 
     system_prompt = """
     You are a property management assistant. Analyze the maintenance request.
-    Output JSON: {"category": "Emergency" | "Urgent" | "Routine", "advice": "One sentence advice for the tenant."}
+    Output JSON: {"category": "Emergency" | "Urgent" | "Routine", "advice": "One sentence advice for the tenant.", "unit": "Unit number if mentioned, else Unknown", "property": "Property name if mentioned, else Unknown"}
     
     Rules:
     - If water leak/flood: Advise to turn off water valve immediately.
@@ -111,7 +111,12 @@ async def classify_maintenance_issue(text: str):
         logging.info(f"[PERF] OpenAI GPT-4o-mini classification took {duration:.2f}s")
 
         data = json.loads(response.choices[0].message.content)
-        return data.get("category", "Routine"), data.get("advice", "We have received your request.")
+        return (
+            data.get("category", "Routine"),
+            data.get("advice", "We have received your request."),
+            data.get("unit", "Unknown"),
+            data.get("property", "Unknown")
+        )
     except Exception as e:
         logging.error(f"Classification failed: {e}")
         return "Error", "Thank you. We have logged your request."
@@ -230,8 +235,8 @@ async def maintenance_recorded(request: Request):
     transcript = await process_audio(mp3_url)
     
     # 2. Classify
-    category, advice = await classify_maintenance_issue(transcript)
-    logging.info(f"Issue: {category}, Advice: {advice}")
+    category, advice, unit, property_name = await classify_maintenance_issue(transcript)
+    logging.info(f"Issue: {category}, Advice: {advice}, Unit: {unit}, Property: {property_name}")
 
     try:
         append_maintenance_row([
@@ -240,16 +245,20 @@ async def maintenance_recorded(request: Request):
             mp3_url,
             transcript or "",
             category,
-            advice
+            advice,
+            unit,
+            property_name
         ])
         logging.info("Sheets append successful")
     except Exception as e:
         logging.error(f"Sheets append failed: {e}")
 
-    await slack_notify(f"🛠️ Maintenance ({category}) from {from_number}\nTranscript: {transcript}\nAdvice Given: {advice}\nRecording: {mp3_url}")
+    await slack_notify(f"🛠️ Maintenance ({category}) from {from_number}\nTranscript: {transcript}\nAdvice Given: {advice}\nUnit: {unit}\nProperty: {property_name}\nRecording: {mp3_url}")
     
     base_url = str(request.base_url).rstrip("/").replace("/twilio/maintenance_recorded", "").replace("http://", "https://")
-    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': advice})}"
+    
+    final_message = f"{advice} We have logged your request for Unit {unit}. A team member will contact you shortly. Goodbye."
+    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': final_message})}"
 
     return Response(
         content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{thanks_url}</Play></Response>',
@@ -297,7 +306,7 @@ def append_maintenance_row(values):
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
-        range="Maintenance!A:F",
+        range="Maintenance!A:H",
         valueInputOption="USER_ENTERED",
         body={"values": [values]},
     ).execute()
