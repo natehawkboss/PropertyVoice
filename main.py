@@ -419,8 +419,20 @@ async def leasing_finish(request: Request):
             logging.error(f"Failed to fetch recording URL: {e}")
             audio_url = "Error fetching URL"
     
-    # Construct "Transcript"
-    full_transcript = f"Name: {name} | Property: {property_name} | Move-in: {move_in_date}"
+    # Clean Inputs (strip trailing periods added by Twilio ASR)
+    name = name.strip().rstrip(".")
+    property_name = property_name.strip().rstrip(".")
+    move_in_date = move_in_date.strip().rstrip(".")
+    
+    # Generate Full Transcript using Whisper if audio is available
+    full_transcript = ""
+    if audio_url.startswith("http"):
+        # This might take a few seconds, but ensures high quality transcript
+        full_transcript = await process_audio(audio_url) or ""
+    
+    # Fallback if Whisper fails or no audio
+    if not full_transcript:
+        full_transcript = f"Name: {name} | Property: {property_name} | Move-in: {move_in_date}"
 
     logging.info(f"Leasing Step 3 (Date): {move_in_date}")
     logging.info(f"Leasing Complete: Name={name}, Property={property_name}, Date={move_in_date}")
