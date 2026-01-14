@@ -18,6 +18,8 @@ logging.basicConfig(level=logging.INFO)
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 OPENAI_SECRET_KEY = os.getenv("OPENAI_SECRET_KEY", "")
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 
 openai_client = AsyncOpenAI(api_key=OPENAI_SECRET_KEY) if OPENAI_SECRET_KEY else None
 
@@ -51,8 +53,13 @@ async def process_audio(recording_url: str):
 
     try:
         logging.info(f"Downloading audio from {recording_url}")
+        
+        auth = None
+        if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+            auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            
         async with httpx.AsyncClient() as client:
-            response = await client.get(recording_url)
+            response = await client.get(recording_url, auth=auth)
             if response.status_code != 200:
                 logging.error(f"Failed to download audio: {response.status_code}")
                 return None
