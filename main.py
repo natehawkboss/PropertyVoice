@@ -309,13 +309,17 @@ async def leasing_property(request: Request):
     # Retry this step if silence (pass name so we don't ask for it again)
     retry_url = f"{base_url}/twilio/leasing/property?name={urllib.parse.quote(name)}"
     
+    # XML requires & to be escaped as &amp;
+    next_action_xml = next_action_url.replace("&", "&amp;")
+    retry_url_xml = retry_url.replace("&", "&amp;")
+
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="{next_action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+  <Gather input="speech" action="{next_action_xml}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
     <Play>{audio_url}</Play>
   </Gather>
   <Say>I did not hear anything.</Say>
-  <Redirect method="POST">{retry_url}</Redirect>
+  <Redirect method="POST">{retry_url_xml}</Redirect>
 </Response>
 """
     return Response(content=twiml, media_type="application/xml")
@@ -357,14 +361,18 @@ async def leasing_date(request: Request):
     
     # Reload this step's URL if timeout
     current_url = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
+    
+    # XML requires & to be escaped as &amp;
+    next_action_xml = next_action.replace("&", "&amp;")
+    current_url_xml = current_url.replace("&", "&amp;")
 
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+  <Gather input="speech" action="{next_action_xml}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
     <Play>{audio_url}</Play>
   </Gather>
   <Say>I did not hear anything.</Say>
-  <Redirect method="POST">{current_url}</Redirect>
+  <Redirect method="POST">{current_url_xml}</Redirect>
 </Response>
 """
     return Response(content=twiml, media_type="application/xml")
