@@ -306,7 +306,7 @@ def append_maintenance_row(values):
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
-        range="Maintenance!A:H",
+        range="Maintenance!A1",
         valueInputOption="USER_ENTERED",
         body={"values": [values]},
     ).execute()
@@ -316,7 +316,7 @@ def append_leasing_row(values):
     service = build("sheets", "v4", credentials=creds)
     service.spreadsheets().values().append(
         spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
-        range="Leasing!A:D",
+        range="Leasing!A1",
         valueInputOption="USER_ENTERED",
         body={"values": [values]},
     ).execute()
