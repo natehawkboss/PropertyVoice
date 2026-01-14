@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 from fastapi import FastAPI, Request
 from fastapi.responses import Response, StreamingResponse
 from openai import AsyncOpenAI
+from twilio.rest import Client
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +23,6 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 
 # Initialize Twilio Client
-from twilio.rest import Client
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else None
 
 openai_client = AsyncOpenAI(api_key=OPENAI_SECRET_KEY) if OPENAI_SECRET_KEY else None
@@ -403,9 +403,24 @@ async def leasing_finish(request: Request):
     from_number = form.get("From") or request.query_params.get("From") or "Unknown"
     call_sid = form.get("CallSid") or "Unknown"
     
-    # Construct "Transcript" and "Audio URL"
+    # Fetch the actual Recording URL (MP3) matching the behavior of <Record>
+    audio_url = "Unknown"
+    if twilio_client and call_sid != "Unknown":
+        try:
+            # List recordings for this call (there should be one "in-progress" or "completed")
+            recordings = twilio_client.recordings.list(call_sid=call_sid, limit=1)
+            if recordings:
+                # Construct raw MP3 URL: https://api.twilio.com/2010-04-01/Accounts/{AC}/Recordings/{RE}.mp3
+                # The .uri property is relative, e.g. /2010-04-01/Accounts/.../Recordings/...
+                rec = recordings[0]
+                audio_url = f"https://api.twilio.com{rec.uri.replace('.json', '.mp3')}"
+                logging.info(f"Found recording URL: {audio_url}")
+        except Exception as e:
+            logging.error(f"Failed to fetch recording URL: {e}")
+            audio_url = "Error fetching URL"
+    
+    # Construct "Transcript"
     full_transcript = f"Name: {name} | Property: {property_name} | Move-in: {move_in_date}"
-    audio_url = f"https://console.twilio.com/us1/monitor/logs/calls/{call_sid}" if call_sid != "Unknown" else "Unknown"
 
     logging.info(f"Leasing Step 3 (Date): {move_in_date}")
     logging.info(f"Leasing Complete: Name={name}, Property={property_name}, Date={move_in_date}")
