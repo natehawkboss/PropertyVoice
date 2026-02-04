@@ -432,14 +432,13 @@ async def voice(request: Request):
         conversation_store.set(call_sid, state)
 
         # Natural greeting (no menu)
-        text = "Hey there, this is the property management line. What can I help you with today?"
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        greeting = "Hey there, this is the property management line. What can I help you with today?"
         action_url = f"{base_url}/twilio/conversation?call_sid={call_sid}"
 
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-    <Play>{audio_url}</Play>
+    {tts_element(base_url, greeting)}
   </Gather>
   <Say>I didn't hear anything. Goodbye.</Say>
 </Response>
@@ -448,15 +447,15 @@ async def voice(request: Request):
 
     else:
         # Legacy DTMF mode
-        text = "Hello. This is the property manager assistant. Press 1 for maintenance. Press 2 for leasing."
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        menu_prompt = "Hello. This is the property manager assistant. Press 1 for maintenance. Press 2 for leasing."
+        no_input = "We did not receive your selection. Goodbye."
 
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather numDigits="1" action="{base_url}/twilio/route" method="POST">
-    <Play>{audio_url}</Play>
+    {tts_element(base_url, menu_prompt)}
   </Gather>
-  <Play>{base_url}/tts?{urllib.parse.urlencode({'text': 'We did not receive your selection. Goodbye.'})}</Play>
+  {tts_element(base_url, no_input)}
 </Response>
 """
         return Response(content=twiml, media_type="application/xml")
@@ -492,13 +491,11 @@ async def conversation(request: Request, background_tasks: BackgroundTasks):
 
     # Handle no speech input
     if not user_speech:
-        text = "I didn't catch that. Could you say that again?"
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-
+        prompt = "I didn't catch that. Could you say that again?"
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-    <Play>{audio_url}</Play>
+    {tts_element(base_url, prompt)}
   </Gather>
   <Say>I still didn't hear anything. Goodbye.</Say>
 </Response>
@@ -522,38 +519,33 @@ async def conversation(request: Request, background_tasks: BackgroundTasks):
         else:
             goodbye = f"{ai_response.response} A leasing agent will reach out shortly. Have a great day!"
 
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': goodbye})}"
-
         # Clean up state
         conversation_store.delete(call_sid)
 
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Play>{audio_url}</Play>
+  {tts_element(base_url, goodbye)}
+</Response>
+"""
+        return Response(content=twiml, media_type="application/xml")
+
+    # Safety: limit to 10 turns
+    if state.turn_count >= 10:
+        limit_msg = "Thanks for calling. If you need more help, please call back. Goodbye!"
+        conversation_store.delete(call_sid)
+
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  {tts_element(base_url, limit_msg)}
 </Response>
 """
         return Response(content=twiml, media_type="application/xml")
 
     # Continue conversation
-    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': ai_response.response})}"
-
-    # Safety: limit to 10 turns
-    if state.turn_count >= 10:
-        text = "Thanks for calling. If you need more help, please call back. Goodbye!"
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-        conversation_store.delete(call_sid)
-
-        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Play>{audio_url}</Play>
-</Response>
-"""
-        return Response(content=twiml, media_type="application/xml")
-
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-    <Play>{audio_url}</Play>
+    {tts_element(base_url, ai_response.response)}
   </Gather>
   <Say>I didn't hear anything. Goodbye.</Say>
 </Response>
@@ -670,43 +662,41 @@ async def route(request: Request):
     logging.info(f"Resolved digit: '{digit}' (from '{val}')")
 
     if digit == "1":
-        text = "You selected maintenance. After the beep, please describe the issue, your unit number, and the best callback number. Press pound when finished."
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        maint_prompt = "You selected maintenance. After the beep, please describe the issue, your unit number, and the best callback number. Press pound when finished."
         record_action = f"{base_url}/twilio/maintenance_recorded"
-        
+
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-    <Play>{audio_url}</Play>
-    <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
-    </Response>
-    """
+<Response>
+  {tts_element(base_url, maint_prompt)}
+  <Record action="{record_action}" method="POST" maxLength="120" finishOnKey="#" playBeep="true" />
+</Response>
+"""
         return Response(content=twiml, media_type="application/xml")
 
     elif digit == "2":
         # Redirect to the start of the conversational flow
-        text = "You selected leasing. Please say your full name."
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        leasing_prompt = "You selected leasing. Please say your full name."
         action_url = f"{base_url}/twilio/leasing/property"
-        
-        # Note: Gather does not support playBeep. We just prompt.
+
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-    <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-        <Play>{audio_url}</Play>
-    </Gather>
-    <Say>I did not hear anything.</Say>
-    <Redirect method="POST">{base_url}/twilio/route?Digits=2</Redirect>
-    </Response>
-    """
+<Response>
+  <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+    {tts_element(base_url, leasing_prompt)}
+  </Gather>
+  <Say>I did not hear anything.</Say>
+  <Redirect method="POST">{base_url}/twilio/route?Digits=2</Redirect>
+</Response>
+"""
         return Response(content=twiml, media_type="application/xml")
 
     else:
-        text = "Invalid selection. Goodbye."
-
-    q = urllib.parse.urlencode({"text": text})
-    audio_url = f"{base_url}/tts?{q}"
-
-    return Response(content=twiml_play(audio_url), media_type="application/xml")
+        invalid_msg = "Invalid selection. Goodbye."
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  {tts_element(base_url, invalid_msg)}
+</Response>
+"""
+        return Response(content=twiml, media_type="application/xml")
 
 @app.get("/twilio_say")
 async def twilio_say(text: str):
@@ -749,32 +739,37 @@ async def _elevenlabs_tts_impl(text: str):
         return r.content
 
 
-def _twiml_say_fallback(text: str) -> Response:
-    """Fallback to Twilio's built-in TTS when ElevenLabs is unavailable."""
-    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">{text}</Say>
-</Response>
-"""
-    return Response(content=twiml, media_type="application/xml")
+def elevenlabs_available() -> bool:
+    """Check if ElevenLabs TTS is configured."""
+    return bool(ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID)
+
+
+def tts_element(base_url: str, text: str) -> str:
+    """Generate TwiML element for TTS - <Play> for ElevenLabs, <Say> for fallback."""
+    if elevenlabs_available():
+        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        return f'<Play>{audio_url}</Play>'
+    else:
+        # Escape XML special characters in text
+        escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f'<Say voice="Polly.Joanna">{escaped}</Say>'
 
 
 @app.get("/tts")
-async def tts(text: str, fallback: str = "false"):
-    """Text-to-speech endpoint with ElevenLabs, falling back to Twilio Say."""
+async def tts(text: str):
+    """Text-to-speech endpoint using ElevenLabs."""
     logging.info("TTS requested: %s", text)
 
-    # If ElevenLabs not configured, use Twilio Say fallback
     if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
-        logging.warning("ElevenLabs not configured, using Twilio Say fallback")
-        return _twiml_say_fallback(text)
+        logging.error("ElevenLabs not configured - this endpoint requires ElevenLabs")
+        return Response("TTS not configured", status_code=503)
 
     try:
         audio_content = await _elevenlabs_tts_impl(text)
         return StreamingResponse(iter([audio_content]), media_type="audio/mpeg")
     except Exception as e:
-        logging.error(f"ElevenLabs TTS failed after retries: {e}, using fallback")
-        return _twiml_say_fallback(text)
+        logging.error(f"ElevenLabs TTS failed after retries: {e}")
+        return Response("TTS unavailable", status_code=503)
 
 @app.api_route("/twilio/maintenance_recorded", methods=["GET", "POST"])
 async def maintenance_recorded(request: Request):
@@ -809,16 +804,17 @@ async def maintenance_recorded(request: Request):
         logging.error(f"Sheets append failed: {e}")
 
     await slack_notify(f"🛠️ Maintenance ({category}) from {from_number}\nTranscript: {transcript}\nAdvice Given: {advice}\nUnit: {unit}\nProperty: {property_name}\nRecording: {mp3_url}")
-    
-    base_url = str(request.base_url).rstrip("/").replace("/twilio/maintenance_recorded", "").replace("http://", "https://")
-    
-    final_message = f"{advice} We have logged your request for Unit {unit}. A team member will contact you shortly. Goodbye."
-    thanks_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': final_message})}"
 
-    return Response(
-        content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{thanks_url}</Play></Response>',
-        media_type="application/xml",
-    )
+    base_url = str(request.base_url).rstrip("/").replace("/twilio/maintenance_recorded", "").replace("http://", "https://")
+
+    final_message = f"{advice} We have logged your request for Unit {unit}. A team member will contact you shortly. Goodbye."
+
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  {tts_element(base_url, final_message)}
+</Response>
+"""
+    return Response(content=twiml, media_type="application/xml")
 
 @app.api_route("/twilio/leasing/property", methods=["GET", "POST"])
 async def leasing_property(request: Request):
@@ -832,33 +828,31 @@ async def leasing_property(request: Request):
     
     if not name:
         logging.info("Leasing Step 1: No speech result. Reprompting.")
-        text = "I didn't catch that. Please say your full name."
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
+        prompt = "I didn't catch that. Please say your full name."
         action_url = f"{base_url}/twilio/leasing/property"
-        
+
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-        <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-            <Play>{audio_url}</Play>
-        </Gather>
-        <Say>I did not hear anything.</Say>
-        <Redirect method="POST">{action_url}</Redirect>
-        </Response>
-        """
+<Response>
+  <Gather input="speech" action="{action_url}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+    {tts_element(base_url, prompt)}
+  </Gather>
+  <Say>I did not hear anything.</Say>
+  <Redirect method="POST">{action_url}</Redirect>
+</Response>
+"""
         return Response(content=twiml, media_type="application/xml")
-        
+
     logging.info(f"Leasing Step 1 (Name): {name}")
 
     # Next Question: Property
-    text = f"Thanks, {name}. Which property are you interested in?"
-    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-    
+    prompt = f"Thanks, {name}. Which property are you interested in?"
+
     # Pass Name to next step via URL
     next_action_url = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
-    
+
     # Retry this step if silence (pass name so we don't ask for it again)
     retry_url = f"{base_url}/twilio/leasing/property?name={urllib.parse.quote(name)}"
-    
+
     # XML requires & to be escaped as &amp;
     next_action_xml = next_action_url.replace("&", "&amp;")
     retry_url_xml = retry_url.replace("&", "&amp;")
@@ -866,7 +860,7 @@ async def leasing_property(request: Request):
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="speech" action="{next_action_xml}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-    <Play>{audio_url}</Play>
+    {tts_element(base_url, prompt)}
   </Gather>
   <Say>I did not hear anything.</Say>
   <Redirect method="POST">{retry_url_xml}</Redirect>
@@ -886,32 +880,29 @@ async def leasing_date(request: Request):
     
     if not property_name:
         logging.info("Leasing Step 2: No speech result. Reprompting.")
-        text = "Sorry, which property was that?"
-        audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-        # Keep name in URL
+        prompt = "Sorry, which property was that?"
         next_action = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
-        
+
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-        <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-            <Play>{audio_url}</Play>
-        </Gather>
-        </Response>
-        """
+<Response>
+  <Gather input="speech" action="{next_action}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
+    {tts_element(base_url, prompt)}
+  </Gather>
+</Response>
+"""
         return Response(content=twiml, media_type="application/xml")
 
     logging.info(f"Leasing Step 2 (Property): {property_name}")
 
     # Next Question: Date
-    text = "Got it. And when are you looking to move in?"
-    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-    
+    prompt = "Got it. And when are you looking to move in?"
+
     # Pass Name & Property to next step
     next_action = f"{base_url}/twilio/leasing/finish?name={urllib.parse.quote(name)}&property={urllib.parse.quote(property_name)}"
-    
+
     # Reload this step's URL if timeout
     current_url = f"{base_url}/twilio/leasing/date?name={urllib.parse.quote(name)}"
-    
+
     # XML requires & to be escaped as &amp;
     next_action_xml = next_action.replace("&", "&amp;")
     current_url_xml = current_url.replace("&", "&amp;")
@@ -919,7 +910,7 @@ async def leasing_date(request: Request):
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="speech" action="{next_action_xml}" method="POST" timeout="6" speechTimeout="auto" speechModel="phone_call">
-    <Play>{audio_url}</Play>
+    {tts_element(base_url, prompt)}
   </Gather>
   <Say>I did not hear anything.</Say>
   <Redirect method="POST">{current_url_xml}</Redirect>
@@ -1016,13 +1007,14 @@ async def leasing_finish(request: Request, background_tasks: BackgroundTasks):
         move_in_date
     )
 
-    text = f"Perfect. We have {name} interested in {property_name} for {move_in_date}. A leasing agent will reach out shortly. Goodbye."
-    audio_url = f"{base_url}/tts?{urllib.parse.urlencode({'text': text})}"
-    
-    return Response(
-        content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Play>{audio_url}</Play></Response>',
-        media_type="application/xml",
-    )
+    goodbye_msg = f"Perfect. We have {name} interested in {property_name} for {move_in_date}. A leasing agent will reach out shortly. Goodbye."
+
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  {tts_element(base_url, goodbye_msg)}
+</Response>
+"""
+    return Response(content=twiml, media_type="application/xml")
 
 @retry(
     stop=stop_after_attempt(3),
